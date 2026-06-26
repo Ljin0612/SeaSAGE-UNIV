@@ -14,9 +14,8 @@ def main():
     ds=SeaShipsRGBDataset(a.data,'train',a.imgsz); dl=DataLoader(ds,batch_size=a.batch,shuffle=True,num_workers=a.num_workers,collate_fn=detection_collate)
     num_classes=len(ds.names)+1
     if a.head!='frcnn': raise NotImplementedError('YOLOv8 head is experimental; use --head frcnn.')
-    model=SeaSAGEFasterRCNN(num_classes).to(device); opt=torch.optim.SGD(model.parameters(),lr=1e-4,momentum=0.9)
+    model=SeaSAGEFasterRCNN(num_classes, univ_weights=a.univ_weights).to(device); opt=torch.optim.SGD(model.parameters(),lr=1e-4,momentum=0.9)
     out=Path(a.project)/a.name; out.mkdir(parents=True,exist_ok=True)
-    print(f"[train] UNIV weights argument reserved for SeaSAGE backbone: {a.univ_weights}")
     if a.smoke_batches < 0:
         raise ValueError('--smoke-batches must be >= 0.')
     if a.smoke_batches > 0:
