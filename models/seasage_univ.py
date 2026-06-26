@@ -51,8 +51,12 @@ class SeaSAGEUNIV(nn.Module):
         self.encoder_dim = encoder_dim
         self.model_dim = model_dim
         self.projection_enabled = encoder_dim != model_dim
-        self.rgb_proj = nn.Conv2d(encoder_dim, model_dim, kernel_size=1)
-        self.ir_proj = nn.Conv2d(encoder_dim, model_dim, kernel_size=1)
+        if self.projection_enabled:
+            self.rgb_proj = nn.Conv2d(encoder_dim, model_dim, kernel_size=1)
+            self.ir_proj = nn.Conv2d(encoder_dim, model_dim, kernel_size=1)
+        else:
+            self.rgb_proj = nn.Identity()
+            self.ir_proj = nn.Identity()
         print(f"UNIV encoder_dim: {encoder_dim}")
         print(f"SeaSAGE model_dim: {model_dim}")
         print(f"projection enabled: {self.projection_enabled}")
@@ -72,6 +76,8 @@ class SeaSAGEUNIV(nn.Module):
     def _project_patches(self, patches, proj):
         if patches.ndim != 3:
             raise ValueError(f"patches must be BxNxD, got {tuple(patches.shape)}")
+        if not self.projection_enabled:
+            return patches
         b, n, d = patches.shape
         h = w = int(math.sqrt(n))
         if h * w != n:

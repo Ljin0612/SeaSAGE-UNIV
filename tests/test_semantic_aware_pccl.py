@@ -89,11 +89,41 @@ def test_seasage_univ_projects_encoder_features_to_model_dim(monkeypatch):
     assert model.encoder_dim == 768
     assert model.model_dim == 384
     assert model.projection_enabled is True
+    assert isinstance(model.rgb_proj, torch.nn.Conv2d)
+    assert isinstance(model.ir_proj, torch.nn.Conv2d)
     assert model.rgb_proj.in_channels == model.rgb_encoder.out_channels
     assert model.rgb_proj.out_channels == 384
+    assert model.ir_proj.in_channels == model.ir_encoder.out_channels
+    assert model.ir_proj.out_channels == 384
 
     projected = model._project_patches(torch.zeros(1, 14 * 14, 768), model.rgb_proj)
     assert projected.shape[-1] == 384
+
+    output = model(
+        torch.zeros(1, 3, 224, 224),
+        torch.zeros(1, 3, 224, 224),
+        imgsz=224,
+        return_loss=False,
+    )
+    assert set(output["features"]) == {"p3", "p4", "p5"}
+
+
+def test_seasage_univ_identity_projection_preserves_encoder_features(monkeypatch):
+    _patch_fake_univ(monkeypatch)
+    from models.seasage_univ import SeaSAGEUNIV
+
+    model = SeaSAGEUNIV(mode="rgb_ir_no_pccl", model_dim=768)
+    assert model.encoder_dim == 768
+    assert model.model_dim == 768
+    assert model.projection_enabled is False
+    assert isinstance(model.rgb_proj, torch.nn.Identity)
+    assert isinstance(model.ir_proj, torch.nn.Identity)
+
+    features = torch.randn(1, 14 * 14, 768)
+    projected = model._project_patches(features, model.rgb_proj)
+    assert projected.shape[-1] == 768
+    assert projected is features
+    assert torch.equal(projected, features)
 
     output = model(
         torch.zeros(1, 3, 224, 224),
