@@ -58,7 +58,7 @@ class UNIVBackbone(nn.Module):
     def __init__(
         self,
         weights: Optional[str] = None,
-        embed_dim: int = 768,
+        projection_dim: int | None = None,
         patch_size: int = 16,
         strict: bool = False,
         input_size: int = 224,
@@ -70,7 +70,13 @@ class UNIVBackbone(nn.Module):
                 f"dependencies (for example timm). Original error: {_UNIV_IMPORT_ERROR}"
             )
         self.encoder = convmae_convvit_base_patch16()
-        self.embed_dim = embed_dim
+        # convmae_convvit_base_patch16 emits 768-channel patch features.
+        # Report the real encoder dimension instead of any downstream model width.
+        self.raw_dim = 768
+        self.out_channels = 768
+        self.feature_dim = 768
+        self.embed_dim = 768
+        self.projection_dim = projection_dim
         self.patch_size = patch_size
         self.input_size = input_size
         if weights:
@@ -120,7 +126,9 @@ class UNIVBackbone(nn.Module):
             b, n, d = patches.shape
             h = w = int(n ** 0.5)
             features = patches.transpose(1, 2).reshape(b, d, h, w).contiguous()
+            assert features.shape[1] == self.out_channels
             print(f"[UNIVBackbone] feature shape: {tuple(features.shape)}")
             return features
+        assert patches.shape[-1] == self.out_channels
         print(f"[UNIVBackbone] feature shape: {tuple(patches.shape)}")
         return patches

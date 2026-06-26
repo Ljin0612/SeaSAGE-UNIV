@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import math
+
 from torch import nn
 
 from models.backbones.univ_backbone import UNIVBackbone
@@ -27,7 +29,7 @@ class SeaSAGEUNIV(nn.Module):
         univ_weights: str | None = None,
         mode: str = "rgb_only",
         fusion_mode: str = "add",
-        embed_dim: int = 384,
+        model_dim: int = 384,
         num_semantic_groups: int = 8,
         temperature: float = 0.07,
         background_weight: float = 0.25,
@@ -43,29 +45,49 @@ class SeaSAGEUNIV(nn.Module):
         if mode == "rgb_ir_semantic_pccl_attention_fusion":
             fusion_mode = "attention"
         self.mode = mode
-        self.rgb_encoder = UNIVBackbone(univ_weights, embed_dim=embed_dim)
-        self.ir_encoder = UNIVBackbone(univ_weights, embed_dim=embed_dim)
+        self.rgb_encoder = UNIVBackbone(univ_weights)
+        self.ir_encoder = UNIVBackbone(univ_weights)
+        encoder_dim = self.rgb_encoder.out_channels
+        self.encoder_dim = encoder_dim
+        self.model_dim = model_dim
+        self.projection_enabled = encoder_dim != model_dim
+        self.rgb_proj = nn.Conv2d(encoder_dim, model_dim, kernel_size=1)
+        self.ir_proj = nn.Conv2d(encoder_dim, model_dim, kernel_size=1)
+        print(f"UNIV encoder_dim: {encoder_dim}")
+        print(f"SeaSAGE model_dim: {model_dim}")
+        print(f"projection enabled: {self.projection_enabled}")
         self.assign = SemanticLabelAssignment(num_semantic_groups=num_semantic_groups)
         self.pccl = SemanticAwarePCCL(
             temperature=temperature,
             background_weight=background_weight,
             normalization=pccl_normalization,
         )
-        self.fusion = CrossModalFusion(embed_dim, fusion_mode)
-        self.adapter = MultiScaleAdapter(embed_dim)
+        self.fusion = CrossModalFusion(model_dim, fusion_mode)
+        self.adapter = MultiScaleAdapter(model_dim)
 
     @property
     def needs_ir(self) -> bool:
         return self.mode != "rgb_only"
 
+    def _project_patches(self, patches, proj):
+        if patches.ndim != 3:
+            raise ValueError(f"patches must be BxNxD, got {tuple(patches.shape)}")
+        b, n, d = patches.shape
+        h = w = int(math.sqrt(n))
+        if h * w != n:
+            raise ValueError(f"Patch count N={n} is not a square grid; cannot project feature map.")
+        x = patches.transpose(1, 2).reshape(b, d, h, w)
+        x = proj(x)
+        return x.flatten(2).transpose(1, 2).contiguous()
+
     def forward(self, rgb, ir=None, imgsz: int = 640, return_loss: bool = True):
         if self.mode == "ir_only":
             if ir is None:
                 raise ValueError("IR input is required when mode='ir_only'.")
-            patch_features = self.ir_encoder(ir)
+            patch_features = self._project_patches(self.ir_encoder(ir), self.ir_proj)
             return {"features": self.adapter(patch_features, imgsz=imgsz), "loss_sem_pccl": None, "attention_map": None}
 
-        rgb_f = self.rgb_encoder(rgb)
+        rgb_f = self._project_patches(self.rgb_encoder(rgb), self.rgb_proj)
         loss_sem_pccl = None
         attention_map = None
         fused = rgb_f
@@ -73,7 +95,7 @@ class SeaSAGEUNIV(nn.Module):
         if self.needs_ir:
             if ir is None:
                 raise ValueError(f"IR input is required when mode='{self.mode}'.")
-            ir_f = self.ir_encoder(ir)
+            ir_f = self._project_patches(self.ir_encoder(ir), self.ir_proj)
             if self.mode in {"rgb_ir_semantic_pccl", "rgb_ir_semantic_pccl_attention_fusion"}:
                 assignment = self.assign(rgb_f, ir_f)
                 if return_loss:
