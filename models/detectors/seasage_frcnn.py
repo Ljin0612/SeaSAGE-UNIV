@@ -18,7 +18,7 @@ class SeaSAGEFRCNNBackbone(nn.Module):
         print("Using SeaSAGEUNIV RGB-only backbone")
         print(f"UNIV weights path: {univ_weights}")
         self.univ = UNIVBackbone(weights=univ_weights)
-        self.proj = nn.Conv2d(self.univ.embed_dim, out_channels, kernel_size=1)
+        self.proj = nn.Conv2d(self.univ.out_channels, out_channels, kernel_size=1)
         self.out_channels = out_channels
 
     def forward(self, x: torch.Tensor) -> OrderedDict[str, torch.Tensor]:
