@@ -31,8 +31,19 @@ class SeaSAGEFRCNNBackbone(nn.Module):
 class SeaSAGEFasterRCNN(nn.Module):
     """Faster R-CNN detector using the real UNIV RGB backbone."""
 
-    def __init__(self, num_classes: int, univ_weights: str | None = None):
+    def __init__(
+        self,
+        num_classes: int,
+        univ_weights: str | None = None,
+        imgsz: int = 640,
+        mode: str = "rgb_only",
+        backbone_type: str = "seasage_univ",
+    ):
         super().__init__()
+        if mode != "rgb_only":
+            raise ValueError(f"SeaSAGEFasterRCNN only supports mode='rgb_only' for this detector, got {mode!r}")
+        if backbone_type != "seasage_univ":
+            raise ValueError(f"SeaSAGEFasterRCNN only supports backbone_type='seasage_univ', got {backbone_type!r}")
         backbone = SeaSAGEFRCNNBackbone(univ_weights=univ_weights)
         anchor_generator = AnchorGenerator(sizes=((16, 32, 64, 128, 256),), aspect_ratios=((0.5, 1.0, 2.0),))
         self.model = FasterRCNN(
@@ -40,7 +51,7 @@ class SeaSAGEFasterRCNN(nn.Module):
             num_classes=num_classes,
             rpn_anchor_generator=anchor_generator,
             min_size=224,
-            max_size=640,
+            max_size=imgsz,
         )
 
     def forward(self, images, targets=None):
