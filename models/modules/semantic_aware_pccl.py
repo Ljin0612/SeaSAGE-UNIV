@@ -8,11 +8,20 @@ import torch.nn.functional as F
 class SemanticAwarePCCL(nn.Module):
     """Semantic-aware RGB-IR patch contrastive loss."""
 
-    def __init__(self, temperature: float = 0.07, background_weight: float = 0.25, eps: float = 1e-8):
+    def __init__(
+        self,
+        temperature: float = 0.07,
+        background_weight: float = 0.25,
+        eps: float = 1e-8,
+        normalization: str = "valid_count",
+    ):
         super().__init__()
+        if normalization not in {"valid_count", "weight_sum"}:
+            raise ValueError("normalization must be either 'valid_count' or 'weight_sum'.")
         self.temperature = temperature
         self.background_weight = background_weight
         self.eps = eps
+        self.normalization = normalization
 
     def forward(
         self,
@@ -33,34 +42,45 @@ class SemanticAwarePCCL(nn.Module):
         same_label = semantic_labels.unsqueeze(2).eq(semantic_labels.unsqueeze(1))
         if foreground_mask is None:
             positive = same_label
-            pair_weight = torch.ones_like(logits)
+            anchor_weight = torch.ones_like(semantic_labels, dtype=logits.dtype)
         else:
-            fg_i = foreground_mask.unsqueeze(2).bool()
-            fg_j = foreground_mask.unsqueeze(1).bool()
+            foreground = foreground_mask.bool()
+            fg_i = foreground.unsqueeze(2)
+            fg_j = foreground.unsqueeze(1)
             fg_fg = fg_i & fg_j
             bg_bg = (~fg_i) & (~fg_j)
+            # Foreground-background mixed pairs are not positives even when their
+            # semantic labels match. Background-background positives are kept
+            # because sea/sky context is informative. The background_weight is
+            # applied once at the anchor level below, not inside positive
+            # averaging, so it cannot be canceled by the per-anchor denominator.
             positive = same_label & (fg_fg | bg_bg)
-            pair_weight = torch.where(
-                bg_bg,
+            anchor_weight = torch.where(
+                foreground,
+                logits.new_ones(()),
                 logits.new_full((), self.background_weight),
-                torch.ones((), device=logits.device, dtype=logits.dtype),
             )
-            # Background-background positives are kept because sea/sky context is
-            # informative, but background_weight down-weights their contribution.
-        weighted_positive = positive.float() * pair_weight
-        positive_weight = weighted_positive.sum(dim=-1)
+        positive_count = positive.float().sum(dim=-1)
 
         logp_rgb_ir = F.log_softmax(logits, dim=-1)
         logp_ir_rgb = F.log_softmax(logits.transpose(1, 2), dim=-1)
-        safe_pos = positive_weight.clamp_min(1)
-        loss_rgb_ir = -(weighted_positive * logp_rgb_ir).sum(dim=-1) / safe_pos
-        loss_ir_rgb = -(weighted_positive.transpose(1, 2) * logp_ir_rgb).sum(dim=-1) / safe_pos
+        safe_pos = positive_count.clamp_min(1)
+        loss_rgb_ir = -(positive.float() * logp_rgb_ir).sum(dim=-1) / safe_pos
+        loss_ir_rgb = -(positive.transpose(1, 2).float() * logp_ir_rgb).sum(dim=-1) / safe_pos
         loss = 0.5 * (loss_rgb_ir + loss_ir_rgb)
 
-        valid = positive_weight > 0
-        weights = torch.ones_like(loss)
+        valid = positive_count > 0
+        weights = anchor_weight
         if semantic_confidence is not None:
             weights = weights * semantic_confidence.clamp(0, 1)
         weights = weights * valid.float()
-        denom = weights.sum().clamp_min(self.eps)
+
+        # normalization='valid_count' divides by the number of valid anchors, so
+        # lower background_weight strongly suppresses background contributions.
+        # normalization='weight_sum' divides by the sum of anchor weights, which
+        # preserves the overall loss scale while still changing anchor balance.
+        if self.normalization == "valid_count":
+            denom = valid.float().sum().clamp_min(self.eps)
+        else:
+            denom = weights.sum().clamp_min(self.eps)
         return (loss * weights).sum() / denom

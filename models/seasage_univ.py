@@ -31,6 +31,7 @@ class SeaSAGEUNIV(nn.Module):
         num_semantic_groups: int = 8,
         temperature: float = 0.07,
         background_weight: float = 0.25,
+        pccl_normalization: str = "valid_count",
     ):
         super().__init__()
         if mode == "rgb":
@@ -45,7 +46,11 @@ class SeaSAGEUNIV(nn.Module):
         self.rgb_encoder = UNIVBackbone(univ_weights, embed_dim=embed_dim)
         self.ir_encoder = UNIVBackbone(univ_weights, embed_dim=embed_dim)
         self.assign = SemanticLabelAssignment(num_semantic_groups=num_semantic_groups)
-        self.pccl = SemanticAwarePCCL(temperature=temperature, background_weight=background_weight)
+        self.pccl = SemanticAwarePCCL(
+            temperature=temperature,
+            background_weight=background_weight,
+            normalization=pccl_normalization,
+        )
         self.fusion = CrossModalFusion(embed_dim, fusion_mode)
         self.adapter = MultiScaleAdapter(embed_dim)
 
