@@ -1,34 +1,12 @@
-# Python
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
-*.egg-info/
-
-# Environments
-.venv/
-env/
-venv/
-*.conda
-
-# Local configs
-configs/*.local.yaml
-
-# Data, weights, outputs
-data/
-datasets_local/
+# local data/configs/weights/outputs
 pretrained/
 runs/
 results/
-*.pth
-*.pt
-*.ckpt
-*.onnx
+configs/*.local.yaml
 
-# Logs
-*.log
-*.csv
-
-# IDE
-.vscode/
-.idea/
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.env
+.DS_Store
