@@ -99,8 +99,11 @@ class SemanticLabelAssignment(nn.Module):
 
             cluster_scores = torch.stack([cross_sim[bi][nearest == ci].mean() if (nearest == ci).any() else x.new_tensor(-1) for ci in range(k)])
             bg_cluster = int(cluster_scores.argmin().item())
-            labels = nearest + 1
-            labels[nearest == bg_cluster] = 0
+            labels = torch.zeros_like(nearest)
+            foreground_clusters = [ci for ci in range(k) if ci != bg_cluster]
+            max_foreground_groups = self.num_semantic_groups - 1
+            for mapped_label, ci in enumerate(foreground_clusters[:max_foreground_groups], start=1):
+                labels[nearest == ci] = mapped_label
 
             # Also mark low-confidence/low-cross-modal-similarity patches as background-like.
             fg_budget = max(1, int(round(n * self.foreground_ratio)))
@@ -108,8 +111,11 @@ class SemanticLabelAssignment(nn.Module):
             foreground_mask = (labels != 0) & (cross_sim[bi] >= sim_threshold)
             labels[~foreground_mask] = 0
 
+            assert labels.min() >= 0
+            assert labels.max() < self.num_semantic_groups
+
             if self.debug:
-                counts = torch.bincount(labels, minlength=self.num_semantic_groups).detach().cpu().tolist()
+                counts = torch.bincount(labels, minlength=self.num_semantic_groups)[:self.num_semantic_groups].detach().cpu().tolist()
                 print(f"[SemanticLabelAssignment] batch={bi} semantic_group_counts={counts}")
 
             batch_labels.append(labels)

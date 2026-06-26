@@ -2,10 +2,18 @@
 pretrained/
 runs/
 results/
+data/
+datasets_local/
 configs/*.local.yaml
+*.pth
+*.pt
+*.ckpt
+*.onnx
+*.log
 
 # Python
 __pycache__/
+*.pyc
 *.py[cod]
 .venv/
 .env
