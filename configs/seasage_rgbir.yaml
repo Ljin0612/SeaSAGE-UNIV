@@ -1,0 +1,10 @@
+# Template config for paired RGB-IR detection.
+# Copy to configs/seasage_rgbir.local.yaml and fill in local paths.
+rgb_root: /path/to/rgb/images
+ir_root: /path/to/ir/images
+label_root: /path/to/yolo/labels
+train: splits/train.txt
+val: splits/val.txt
+test: splits/test.txt
+names:
+  0: vessel
