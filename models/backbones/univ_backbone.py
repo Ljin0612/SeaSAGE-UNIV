@@ -1,9 +1,13 @@
-"""UNIV/ViT backbone wrapper for SeaSAGE-UNIV."""
+"""UNIV/ConvMAE backbone wrapper for SeaSAGE-UNIV."""
 from __future__ import annotations
+
+import sys
 from pathlib import Path
 from typing import Optional
+
 import numpy as np
 import torch
+import torch.nn.functional as F
 from torch import nn
 
 # NumPy 1.24 removed aliases used by some older ViT/UNIV utilities.
@@ -12,53 +16,111 @@ if not hasattr(np, "float"):
 if not hasattr(np, "int"):
     np.int = int  # type: ignore[attr-defined]
 
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_UNIV_ROOT = _REPO_ROOT / "UNIV-main"
+_MCMAE_DIR = _UNIV_ROOT / "models" / "backbone" / "mcmae"
 
-class SimplePatchViT(nn.Module):
-    """Lightweight patch encoder used until the original UNIV code is integrated."""
-    def __init__(self, in_chans: int = 3, embed_dim: int = 384, patch_size: int = 16):
-        super().__init__()
-        self.patch_size = patch_size
-        self.embed_dim = embed_dim
-        self.proj = nn.Conv2d(in_chans, embed_dim, kernel_size=patch_size, stride=patch_size)
-        self.norm = nn.LayerNorm(embed_dim)
+try:
+    import importlib.util
+    import types
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = self.proj(x)  # B,D,H',W'
-        b, d, h, w = x.shape
-        x = x.flatten(2).transpose(1, 2)  # B,N,D
-        return self.norm(x)
+    package_name = "_seasage_univ_mcmae"
+    if package_name not in sys.modules:
+        package = types.ModuleType(package_name)
+        package.__path__ = [str(_MCMAE_DIR)]  # type: ignore[attr-defined]
+        sys.modules[package_name] = package
+    spec = importlib.util.spec_from_file_location(
+        f"{package_name}.models_convmae",
+        _MCMAE_DIR / "models_convmae.py",
+    )
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Cannot load UNIV ConvMAE module from {_MCMAE_DIR}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    convmae_convvit_base_patch16 = module.convmae_convvit_base_patch16
+except Exception as exc:  # pragma: no cover - surfaced when UNIV deps are missing.
+    convmae_convvit_base_patch16 = None  # type: ignore[assignment]
+    _UNIV_IMPORT_ERROR = exc
+else:
+    _UNIV_IMPORT_ERROR = None
 
 
 class UNIVBackbone(nn.Module):
-    """Wrapper that returns patch features as BxNxD and can load local checkpoints."""
-    def __init__(self, weights: Optional[str] = None, embed_dim: int = 384, patch_size: int = 16, strict: bool = False):
+    """Thin wrapper around the real UNIV ConvMAE encoder.
+
+    UNIV's released ConvMAE model is configured for 224x224 inputs and returns
+    a 14x14 sequence with 768 channels. For detection we resize RGB tensors to
+    that native size before calling ``forward(..., mask_ratio=0.0)`` so no patch
+    tokens are dropped.
+    """
+
+    def __init__(
+        self,
+        weights: Optional[str] = None,
+        embed_dim: int = 768,
+        patch_size: int = 16,
+        strict: bool = False,
+        input_size: int = 224,
+    ):
         super().__init__()
-        self.encoder = SimplePatchViT(embed_dim=embed_dim, patch_size=patch_size)
+        if convmae_convvit_base_patch16 is None:
+            raise ImportError(
+                "Failed to import UNIV-main ConvMAE backbone. Install the UNIV "
+                f"dependencies (for example timm). Original error: {_UNIV_IMPORT_ERROR}"
+            )
+        self.encoder = convmae_convvit_base_patch16()
         self.embed_dim = embed_dim
         self.patch_size = patch_size
+        self.input_size = input_size
         if weights:
             self.load_pretrained(weights, strict=strict)
 
+    def _select_state_dict(self, ckpt):
+        if not isinstance(ckpt, dict):
+            return ckpt
+        for key in ("model", "state_dict", "student", "teacher", "backbone"):
+            value = ckpt.get(key)
+            if isinstance(value, dict) and any(torch.is_tensor(v) for v in value.values()):
+                return value
+        if any(torch.is_tensor(v) for v in ckpt.values()):
+            return ckpt
+        return {}
+
     def load_pretrained(self, weights: str, strict: bool = False) -> None:
         path = Path(weights)
+        print(f"[UNIVBackbone] UNIV weights path: {path}")
         if not path.exists():
             print(f"[UNIVBackbone] checkpoint not found: {path}. Training from scratch.")
             return
-        try:
-            ckpt = torch.load(path, map_location="cpu")
-        except Exception:
-            ckpt = torch.load(path, map_location="cpu", weights_only=False)
-        state = ckpt.get("model", ckpt.get("state_dict", ckpt)) if isinstance(ckpt, dict) else ckpt
-        cleaned = {k.replace("module.", "").replace("backbone.", ""): v for k, v in state.items() if torch.is_tensor(v)}
+        ckpt = torch.load(path, map_location="cpu", weights_only=False)
+        state = self._select_state_dict(ckpt)
+        cleaned = {}
+        for key, value in state.items():
+            if not torch.is_tensor(value):
+                continue
+            name = key
+            for prefix in ("module.backbone.", "backbone.", "module.encoder.", "encoder.", "module."):
+                if name.startswith(prefix):
+                    name = name[len(prefix):]
+                    break
+            cleaned[name] = value
         result = self.encoder.load_state_dict(cleaned, strict=strict)
-        print(f"[UNIVBackbone] loaded keys: {len(cleaned)}")
-        print(f"[UNIVBackbone] missing keys: {result.missing_keys}")
-        print(f"[UNIVBackbone] unexpected keys: {result.unexpected_keys}")
+        loaded = sorted(set(cleaned) - set(result.unexpected_keys))
+        print(f"[UNIVBackbone] Loaded UNIV checkpoint: {path}")
+        print(f"[UNIVBackbone] loaded keys ({len(loaded)}): {loaded[:20]}{' ...' if len(loaded) > 20 else ''}")
+        print(f"[UNIVBackbone] missing keys ({len(result.missing_keys)}): {result.missing_keys}")
+        print(f"[UNIVBackbone] unexpected keys ({len(result.unexpected_keys)}): {result.unexpected_keys}")
 
     def forward(self, x: torch.Tensor, output_format: str = "bnd") -> torch.Tensor:
-        patches = self.encoder(x)
+        if x.shape[-2:] != (self.input_size, self.input_size):
+            x = F.interpolate(x, size=(self.input_size, self.input_size), mode="bilinear", align_corners=False)
+        patches, _ = self.encoder(x, mask_ratio=0.0, return_last_attention=False)
         if output_format == "bchw":
             b, n, d = patches.shape
             h = w = int(n ** 0.5)
-            return patches.transpose(1, 2).reshape(b, d, h, w)
+            features = patches.transpose(1, 2).reshape(b, d, h, w).contiguous()
+            print(f"[UNIVBackbone] feature shape: {tuple(features.shape)}")
+            return features
+        print(f"[UNIVBackbone] feature shape: {tuple(patches.shape)}")
         return patches
