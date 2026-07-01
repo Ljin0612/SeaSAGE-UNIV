@@ -29,6 +29,7 @@ def parse_args():
     p.add_argument("--univ-weights", default=None)
     p.add_argument("--score-thres", type=float, default=0.001)
     p.add_argument("--iou-thres", type=float, default=0.50, help="IoU threshold used for Precision/Recall matching.")
+    p.add_argument("--backbone-type", choices=["seasage_univ_single", "seasage_univ_fpn"], default=None)
     return p.parse_args()
 
 
@@ -148,9 +149,10 @@ def main():
     print(f"data config: {a.data}")
     print(f"split: {a.split}")
     print(f"num_classes: {num_classes}")
-    print("model architecture: SeaSAGEFasterRCNN(num_classes=num_classes, univ_weights=..., imgsz=..., mode='rgb_only', backbone_type='seasage_univ')")
+    backbone_type = a.backbone_type or ckpt_args.get("backbone_type", "seasage_univ_single")
+    print(f"model architecture: SeaSAGEFasterRCNN(num_classes=num_classes, univ_weights=..., imgsz=..., mode='rgb_only', backbone_type='{backbone_type}')")
 
-    model = SeaSAGEFasterRCNN(num_classes=num_classes, univ_weights=univ_weights, imgsz=a.imgsz, mode="rgb_only", backbone_type="seasage_univ")
+    model = SeaSAGEFasterRCNN(num_classes=num_classes, univ_weights=univ_weights, imgsz=a.imgsz, mode="rgb_only", backbone_type=backbone_type)
     state = select_state_dict(ckpt)
     print(f"loaded checkpoint keys: {list(state.keys())[:20]}{' ...' if len(state) > 20 else ''}")
     model.load_state_dict(state, strict=True)
