@@ -6,11 +6,12 @@ from torch.utils.data import DataLoader
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from datasets.rgb_dataset import SeaShipsRGBDataset, detection_collate
 from models.detectors.seasage_frcnn import SeaSAGEFasterRCNN
+from scripts.device_utils import resolve_device
 
 def parse_args():
     p=argparse.ArgumentParser(); p.add_argument('--data',required=True); p.add_argument('--epochs',type=int,default=1); p.add_argument('--batch',type=int,default=1); p.add_argument('--imgsz',type=int,default=640); p.add_argument('--device',default='cpu'); p.add_argument('--project',default='runs/detect'); p.add_argument('--name',default='exp'); p.add_argument('--univ-weights',default=None); p.add_argument('--head',choices=['frcnn','yolov8'],default='frcnn'); p.add_argument('--num-workers',type=int,default=0); p.add_argument('--smoke-batches',type=int,default=0,help='Number of batches to train per epoch for smoke tests; 0 means full dataloader.'); p.add_argument('--backbone-type', choices=['seasage_univ_single','seasage_univ_fpn'], default='seasage_univ_single'); return p.parse_args()
 def main():
-    a=parse_args(); device=torch.device(f"cuda:{a.device}" if str(a.device).isdigit() and torch.cuda.is_available() else a.device)
+    a=parse_args(); device=resolve_device(a.device)
     ds=SeaShipsRGBDataset(a.data,'train',a.imgsz); dl=DataLoader(ds,batch_size=a.batch,shuffle=True,num_workers=a.num_workers,collate_fn=detection_collate)
     num_classes=len(ds.names)+1
     if a.head!='frcnn': raise NotImplementedError('YOLOv8 head is experimental; use --head frcnn.')

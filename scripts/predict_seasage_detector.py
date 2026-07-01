@@ -8,6 +8,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from datasets.rgb_dataset import SeaShipsRGBDataset
 from models.detectors.seasage_frcnn import SeaSAGEFasterRCNN
 from scripts.eval_seasage_detector import select_state_dict
+from scripts.device_utils import resolve_device
 
 
 def parse_args():
@@ -32,7 +33,7 @@ def draw_box(draw, box, text, color, width=3, dashed=False):
     draw.text((x1+2, max(0,y1-12)), text, fill=color)
 
 def main():
-    a=parse_args(); device=torch.device(f'cuda:{a.device}' if str(a.device).isdigit() and torch.cuda.is_available() else a.device)
+    a=parse_args(); device=resolve_device(a.device)
     ckpt=torch.load(a.weights, map_location='cpu', weights_only=False); ckpt_args=ckpt.get('args',{}) if isinstance(ckpt,dict) else {}
     univ=a.univ_weights or ckpt_args.get('univ_weights'); backbone=a.backbone_type or ckpt_args.get('backbone_type','seasage_univ_single')
     if not univ: raise ValueError('--univ-weights or checkpoint args univ_weights is required')

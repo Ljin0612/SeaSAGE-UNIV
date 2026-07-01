@@ -14,6 +14,7 @@ from torch.utils.data import DataLoader
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from datasets.rgb_dataset import SeaShipsRGBDataset, detection_collate
 from models.detectors.seasage_frcnn import SeaSAGEFasterRCNN
+from scripts.device_utils import resolve_device
 
 
 def parse_args():
@@ -140,7 +141,7 @@ def main():
     if not univ_weights:
         raise ValueError("--univ-weights was not provided and checkpoint['args']['univ_weights'] is missing. Refusing to evaluate with the wrong backbone weights.")
 
-    device = torch.device(f"cuda:{a.device}" if str(a.device).isdigit() and torch.cuda.is_available() else a.device)
+    device = resolve_device(a.device)
     ds = SeaShipsRGBDataset(a.data, a.split, a.imgsz)
     dl = DataLoader(ds, batch_size=a.batch, shuffle=False, num_workers=0, collate_fn=detection_collate)
     names = class_name_map(ds.names)
