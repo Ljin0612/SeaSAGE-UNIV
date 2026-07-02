@@ -1,0 +1,13 @@
+numpy
+pandas
+tqdm
+PyYAML
+Pillow
+opencv-python-headless
+matplotlib
+scipy
+scikit-learn
+timm
+einops
+pycocotools
+pytest
